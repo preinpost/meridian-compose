@@ -1,0 +1,10 @@
+{
+  "pi": {
+    "codeSystemPrompt": true,
+    "clientSystemPrompt": false
+  },
+  "claude-code": {
+    "codeSystemPrompt": true,
+    "clientSystemPrompt": false
+  }
+}

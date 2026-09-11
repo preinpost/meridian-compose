@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meridian 장애 분석 리포트: Claude 1M 세션 한도 급속 소진 사고</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --card-border: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --accent-red: #dc2626;
+      --accent-yellow: #d97706;
+      --accent-green: #16a34a;
+      --accent-blue: #2563eb;
+      --accent-purple: #7c3aed;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Apple SD Gothic Neo", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      line-height: 1.6;
+      padding: 40px 24px;
+    }
+    .container { max-width: 1080px; margin: 0 auto; }
+    
+    header {
+      margin-bottom: 36px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 24px;
+    }
+    .badge-bar { display: flex; gap: 10px; margin-bottom: 12px; }
+    .badge {
+      font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 9999px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .badge-red {
+      background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;
+    }
+    .badge-blue {
+      background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe;
+    }
+    
+    h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; color: #0f172a; }
+    .subtitle { color: var(--text-muted); font-size: 15px; }
+
+    .grid-4 {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px; margin-bottom: 32px;
+    }
+    .stat-card {
+      background: var(--card-bg); border: 1px solid var(--card-border);
+      border-radius: 12px; padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .stat-title { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+    .stat-val { font-size: 26px; font-weight: 700; color: #0f172a; }
+    .stat-val.red { color: #dc2626; }
+    .stat-val.yellow { color: #d97706; }
+    .stat-desc { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    .section {
+      background: var(--card-bg); border: 1px solid var(--card-border);
+      border-radius: 14px; padding: 28px; margin-bottom: 28px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    h2 {
+      font-size: 18px; font-weight: 600; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px; color: #0f172a;
+    }
+    h2::before {
+      content: ""; display: inline-block; width: 4px; height: 18px;
+      background: var(--accent-blue); border-radius: 2px;
+    }
+
+    /* 비교 다이어그램 */
+    .compare-container {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px;
+    }
+    @media (max-width: 768px) { .compare-container { grid-template-columns: 1fr; } }
+    .compare-box {
+      border: 1px solid var(--card-border); border-radius: 10px; padding: 20px;
+      background: #f8fafc;
+    }
+    .compare-box.good {
+      border-color: #bbf7d0; background: #f0fdf4;
+    }
+    .compare-box.bad {
+      border-color: #fecaca; background: #fef2f2;
+    }
+    .compare-header { font-weight: 600; font-size: 15px; margin-bottom: 12px; }
+    .compare-box.good .compare-header { color: #15803d; }
+    .compare-box.bad .compare-header { color: #b91c1c; }
+
+    .step-list { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+    .step-item {
+      display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
+      background: #ffffff; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);
+      color: #334155;
+    }
+    .step-num {
+      background: #e2e8f0; color: #475569; border-radius: 4px;
+      width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+      font-size: 11px; flex-shrink: 0; font-weight: 600;
+    }
+
+    /* 코드 및 인용 */
+    pre, code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .log-box {
+      background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px;
+      padding: 14px 18px; font-size: 13px; color: #1e293b; overflow-x: auto;
+      margin: 14px 0; line-height: 1.6;
+    }
+    .highlight-red { color: #b91c1c; font-weight: 600; }
+    .highlight-yellow { color: #b45309; font-weight: 600; }
+    .highlight-blue { color: #1d4ed8; font-weight: 600; }
+
+    /* 타임라인 테이블 */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+    th {
+      text-align: left; padding: 10px 12px;
+      border-bottom: 2px solid #cbd5e1; color: #475569; font-weight: 600;
+      background: #f8fafc;
+    }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--card-border); color: #334155; }
+    tr:last-child td { border-bottom: none; }
+    tr.danger { background: #fff1f2; }
+    .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .tag-new { background: #fee2e2; color: #b91c1c; }
+    .tag-cont { background: #dcfce7; color: #15803d; }
+    .tag-error { background: #ef4444; color: #ffffff; }
+
+    .action-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px; margin-top: 14px;
+    }
+    .action-item {
+      border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;
+      background: #f8fafc;
+    }
+    .action-title { font-weight: 600; font-size: 14px; color: #1d4ed8; margin-bottom: 6px; }
+    .action-text { font-size: 13px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge-bar">
+        <span class="badge badge-red">장애 원인 분석 보고서</span>
+        <span class="badge badge-blue">Meridian 텔레메트리 실측</span>
+      </div>
+      <h1>Claude 1M 세션 한도 급속 소진 사고 분석 리포트</h1>
+      <p class="subtitle">14시 30분 ~ 14시 38분(8분)간 연속 세션 분기(Diverged Replay)로 인한 220만 토큰 캐시 생성 폭탄 분석</p>
+    </header>
+
+    <!-- 핵심 지표 카드 -->
+    <div class="grid-4">
+      <div class="stat-card">
+        <div class="stat-title">소진 소요 시간</div>
+        <div class="stat-val yellow">8분 41초</div>
+        <div class="stat-desc">14:30:19 시작 → 14:38:27 429 차단</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">신규 작성된 캐시 (Write)</div>
+        <div class="stat-val red">2,206,000</div>
+        <div class="stat-desc">생 입력 환산 약 275만 토큰 (1.25x)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">직접 유발 불일치 크기</div>
+        <div class="stat-val">361 Bytes</div>
+        <div class="stat-desc">인덱스 290번의 시스템 리마인더 차이</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">쿼터 초기화 시각</div>
+        <div class="stat-val">19:00 KST</div>
+        <div class="stat-desc">Anthropic 5시간 롤링 윈도우 (10:00 UTC)</div>
+      </div>
+    </div>
+
+    <!-- 나비효과 시각화 -->
+    <div class="section">
+      <h2>메커니즘 비교: 정상 세션 재개 vs 361B 불일치 Replay 폭탄</h2>
+      <div class="compare-container">
+        <!-- 정상 케이스 -->
+        <div class="compare-box good">
+          <div class="compare-header">✓ 정상 세션 재개 (Continuation)</div>
+          <div class="step-list">
+            <div class="step-item">
+              <span class="step-num">1</span>
+              <div>직전 대화 290개 메시지(40만 토큰) 완벽 일치</div>
+            </div>
+            <div class="step-item">
+              <span class="step-num">2</span>
+              <div>기존 SDK 세션 포인터 유지 (Cache Read 99%+)</div>
+            </div>
+            <div class="step-item">
+              <span class="step-num">3</span>
+              <div>신규 사용자 입력(2k 토큰)만 쿼터 차감</div>
+            </div>
+            <div class="step-item">
+              <span class="step-num">4</span>
+              <div><strong>결과:</strong> 5시간 동안 수백 번 턴을 주고받아도 한도 안전</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 사고 케이스 -->
+        <div class="compare-box bad">
+          <div class="compare-header">✗ 이번에 발생한 세션 분기 (Stale Replay)</div>
+          <div class="step-list">
+            <div class="step-item">
+              <span class="step-num">1</span>
+              <div>Claude Code가 290번에 <span class="highlight-red">361B 시스템 리마인더</span> 주입</div>
+            </div>
+            <div class="step-item">
+              <span class="step-num">2</span>
+              <div>Meridian 세션 검증 실패: <code>Starting fresh replay</code></div>
+            </div>
+            <div class="step-item">
+              <span class="step-num">3</span>
+              <div>기존 40만 토큰 전체를 <span class="highlight-red">신규 캐시 생성(Write)</span>으로 전액 재과금</div>
+            </div>
+            <div class="step-item">
+              <span class="step-num">4</span>
+              <div><strong>결과:</strong> 6번 반복만으로 220만 캐시 토큰 소진 → 429 한도 초과</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 스모킹 건 로그 -->
+    <div class="section">
+      <h2>스모킹 건: Meridian 내부 진단 로그</h2>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">
+        0번부터 289번까지 290개의 메시지는 완벽하게 일치했으나, 직전 마지막 1개 메시지가 361바이트 달라졌다는 이유로 전체 40만 토큰 Replay가 발생했습니다.
+      </p>
+      <div class="log-box">
+        <span class="highlight-yellow">WARN</span> lineage: Stale session detected (key=94e19970…): prefix overlap <span class="highlight-blue">290/291</span>, incoming 294 msgs.<br>
+        &nbsp;&nbsp;<span class="highlight-red">Starting fresh replay.</span> first mismatch at index 290 (<span class="highlight-yellow">trailing message only</span> — the rest of the history matched):<br>
+        &nbsp;&nbsp;stored=6bff1f3bb876 incoming=4d42f58a3fe8, incoming now <span class="highlight-red">system[string] 361B</span>
+      </div>
+    </div>
+
+    <!-- 기술적 심층 분석 섹션 추가 -->
+    <div class="section">
+      <h2>심층 분석: 361바이트 불일치가 40만 토큰 과금으로 증폭된 4단계 과정</h2>
+      <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 14px;">
+        <div style="border-left: 4px solid var(--accent-blue); padding: 12px 16px; background: #f8fafc; border-radius: 0 8px 8px 0;">
+          <div style="font-weight: 600; font-size: 14px; color: #1e293b; margin-bottom: 4px;">1단계: Claude Code의 시스템 리마인더 갱신</div>
+          <div style="font-size: 13px; color: #475569;">
+            Claude Code는 매 턴마다 현재 작업 환경(현재 시각, 작업 디렉터리의 git 상태, 터미널 환경 등)을 최신화하여 프롬프트 말미에 <code>&lt;system-reminder&gt;</code> 형태로 주입합니다. 이 과정에서 직전 턴에 전송되었던 인덱스 290번 메시지의 내용이 361바이트 크기의 새로운 시스템 텍스트로 치환되었습니다.
+          </div>
+        </div>
+
+        <div style="border-left: 4px solid var(--accent-yellow); padding: 12px 16px; background: #f8fafc; border-radius: 0 8px 8px 0;">
+          <div style="font-weight: 600; font-size: 14px; color: #1e293b; margin-bottom: 4px;">2단계: Meridian의 엄격한 해시 검증과 구제 실패</div>
+          <div style="font-size: 13px; color: #475569;">
+            Meridian의 세션 검증 엔진(<code>verifyLineage</code>)은 이전 대화 배열의 해시(<code>lineageHash</code>)가 완벽히 일치해야만 기존 SDK 세션을 이어받습니다. 직전 메시지의 <code>tool_result</code>가 누적된 경우에는 부분 재개(boundary continuation)를 허용하는 예외 로직이 있으나, 이번 불일치는 <strong>시스템 메시지(system[string]) 변경</strong>이었기 때문에 구제되지 못하고 <code>modified-history</code>(이력 변조)로 판정되었습니다.
+          </div>
+        </div>
+
+        <div style="border-left: 4px solid var(--accent-red); padding: 12px 16px; background: #f8fafc; border-radius: 0 8px 8px 0;">
+          <div style="font-weight: 600; font-size: 14px; color: #1e293b; margin-bottom: 4px;">3단계: 기존 세션 폐기 및 40만 토큰 전액 Replay 트리거</div>
+          <div style="font-size: 13px; color: #475569;">
+            이력이 오염되었다고 판단한 Meridian은 기존 Claude Code 백그라운드 세션 포인터를 즉시 폐기하고, <strong>0번부터 290번까지의 대화 40만 토큰 전체를 완전히 새로운 세션에 처음부터 재생(<code>Starting fresh replay</code>)</strong>하도록 지시했습니다. 앞선 290개 메시지(40만 토큰)가 완전히 일치했음에도 불구하고 캐시 참조 연결 고리가 끊어졌습니다.
+          </div>
+        </div>
+
+        <div style="border-left: 4px solid #b91c1c; padding: 12px 16px; background: #fef2f2; border-radius: 0 8px 8px 0;">
+          <div style="font-weight: 600; font-size: 14px; color: #991b1b; margin-bottom: 4px;">4단계: Anthropic API의 1.25배 신규 캐시 작성 과금 폭탄</div>
+          <div style="font-size: 13px; color: #7f1d1d;">
+            Anthropic 프롬프트 캐싱 구조상, 세션이 끊겨 새로 들어온 40만 토큰은 '캐시 읽기(Cache Read)'가 아닌 <strong>'신규 캐시 생성(Cache Creation)'</strong>으로 처리됩니다. 캐시 생성 토큰은 일반 입력의 1.25배 가중치가 부과되므로, 361바이트 차이 하나 때문에 1회 턴당 <strong>45만~50만 토큰 상당의 세션 쿼터</strong>가 일시에 증발했습니다. 이것이 6번 반복되면서 8분 만에 한도가 100% 소진된 것입니다.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 실제 타임라인 테이블 -->
+    <div class="section">
+      <h2>장애 발생 타임라인 (14:30 ~ 14:38 KST 실측 DB)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>시각 (KST)</th>
+            <th>구분</th>
+            <th>메시지 수</th>
+            <th>Cache Read</th>
+            <th>Cache Write (신규 작성)</th>
+            <th>캐시율</th>
+            <th>상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="danger">
+            <td>1506</td>
+            <td>14:30:46</td>
+            <td><span class="tag tag-new">NEW</span></td>
+            <td>288 msgs</td>
+            <td>418.3k</td>
+            <td><strong>418.8k (41.8만)</strong></td>
+            <td>50.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr>
+            <td>1510</td>
+            <td>14:31:24</td>
+            <td><span class="tag tag-cont">CONT</span></td>
+            <td>291 msgs</td>
+            <td>1.26M</td>
+            <td>2.2k</td>
+            <td>100.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr class="danger">
+            <td>1512</td>
+            <td>14:31:44</td>
+            <td><span class="tag tag-new">NEW</span></td>
+            <td>294 msgs</td>
+            <td>490.1k</td>
+            <td><strong>353.5k (35.3만)</strong></td>
+            <td>58.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr>
+            <td>1516</td>
+            <td>14:32:05</td>
+            <td><span class="tag tag-cont">CONT</span></td>
+            <td>297 msgs</td>
+            <td>421.6k</td>
+            <td>471</td>
+            <td>100.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr class="danger">
+            <td>1521</td>
+            <td>14:33:56</td>
+            <td><span class="tag tag-new">NEW</span></td>
+            <td>300 msgs</td>
+            <td>491.2k</td>
+            <td><strong>354.8k (35.4만)</strong></td>
+            <td>58.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr>
+            <td>1524</td>
+            <td>14:34:24</td>
+            <td><span class="tag tag-cont">CONT</span></td>
+            <td>303 msgs</td>
+            <td>846.3k</td>
+            <td>2.2k</td>
+            <td>100.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr class="danger">
+            <td>1529</td>
+            <td>14:35:14</td>
+            <td><span class="tag tag-new">NEW</span></td>
+            <td>306 msgs</td>
+            <td>493.1k</td>
+            <td><strong>358.3k (35.8만)</strong></td>
+            <td>58.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr class="danger">
+            <td>1533</td>
+            <td>14:35:49</td>
+            <td><span class="tag tag-new">NEW</span></td>
+            <td>309 msgs</td>
+            <td>68.5k</td>
+            <td><strong>359.0k (35.9만)</strong></td>
+            <td>16.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr class="danger">
+            <td>1541</td>
+            <td>14:38:07</td>
+            <td><span class="tag tag-new">NEW</span></td>
+            <td>309 msgs</td>
+            <td>68.5k</td>
+            <td><strong>361.6k (36.1만)</strong></td>
+            <td>16.0%</td>
+            <td>200 OK</td>
+          </tr>
+          <tr style="background: #fee2e2;">
+            <td>1542</td>
+            <td>14:38:27</td>
+            <td><span class="tag tag-error">FAIL</span></td>
+            <td>5 msgs</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+            <td><strong>429 Rate Limit</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

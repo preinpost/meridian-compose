@@ -1,0 +1,72 @@
+name: meridian
+
+services:
+  # 두 가지를 처리한다.
+  #  1. config/sdk-features.json 을 설정 볼륨에 복사한다. up 할 때마다 덮어쓰므로
+  #     레포의 파일이 항상 선언된 상태가 되고, /settings UI에서 바꾼 값은 다음 up에서
+  #     레포 값으로 되돌아간다. telemetry.db 는 볼륨에 그대로 남는다.
+  #  2. 이름 있는 볼륨은 root 소유로 생성되는데 런타임은 uid 1000(claude)으로 돌기
+  #     때문에 소유권을 맞춘다. 첫 실행 이후에는 즉시 끝난다.
+  init:
+    image: busybox
+    user: root
+    volumes:
+      - claude-state:/mnt/claude
+      - meridian-config:/mnt/config
+      - meridian-cache:/mnt/cache
+      - ./config:/seed:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -f /seed/sdk-features.json ]; then
+          cp /seed/sdk-features.json /mnt/config/sdk-features.json
+          echo "[init] seeded sdk-features.json"
+        fi
+        chown -R 1000:1000 /mnt/claude /mnt/config /mnt/cache
+    restart: "no"
+
+  meridian:
+    # 멀티아치(amd64/arm64) 공식 이미지. 재현성이 필요하면 :latest 대신 버전 태그를 박아둔다.
+    image: ghcr.io/rynfar/meridian:${MERIDIAN_VERSION:-latest}
+    container_name: meridian
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    ports:
+      # 호스트의 npm 전역 meridian이 3456을 쓰고 있어 기본값을 3466으로 둔다.
+      # 기본은 루프백 바인딩. LAN에 노출하려면 .env에 MERIDIAN_BIND_ADDR=0.0.0.0 을
+      # 지정하되, 반드시 MERIDIAN_API_KEY도 함께 설정한다.
+      - "${MERIDIAN_BIND_ADDR:-127.0.0.1}:${MERIDIAN_HOST_PORT:-3456}:3456"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # 이미지가 이미 CLAUDE_PROXY_HOST=0.0.0.0, PASSTHROUGH=1, IS_SANDBOX=1을 세팅해둠.
+      MERIDIAN_NO_UPDATE_CHECK: "1"
+      # 텔레메트리를 재시작 후에도 유지 (/telemetry 대시보드)
+      MERIDIAN_TELEMETRY_PERSIST: "1"
+      # 알 수 없는 클라이언트의 기본 어댑터: opencode | pi | crush | droid | claudecode | passthrough
+      MERIDIAN_DEFAULT_AGENT: ${MERIDIAN_DEFAULT_AGENT:-opencode}
+    volumes:
+      # 인증은 .env 의 MERIDIAN_PROFILES 로만 한다(단일 계정도 원소 하나짜리 배열).
+      # 이 볼륨에는 자격증명이 아니라 SDK 가 쓰는 상태(projects/ 대화 기록,
+      # sessions/, jobs/)가 들어간다. 프로필별 CLAUDE_CONFIG_DIR 은 meridian-config
+      # 볼륨 아래 profiles/<id> 로 분리된다.
+      - claude-state:/home/claude/.claude
+      - meridian-config:/home/claude/.config/meridian  # SDK 기능 토글/프로필/모델 가격/텔레메트리 DB
+      - meridian-cache:/home/claude/.cache/meridian    # 세션 매핑 (재시작 후 대화 복구)
+      # 내부 도구 실행(비-passthrough)이 필요할 때만 작업 디렉터리를 마운트한다.
+      # - ${MERIDIAN_WORKSPACE:-~/dev}:/workspace
+    healthcheck:
+      test: ["CMD", "node", "-e", "const r=await fetch('http://127.0.0.1:3456/health');process.exit(r.ok?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  claude-state:
+  meridian-config:
+  meridian-cache:

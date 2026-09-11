@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code 내부 구조 심층 분석: 가변 시스템 프롬프트와 캐시 무효화 메커니즘</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --card-border: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --accent-red: #dc2626;
+      --accent-yellow: #d97706;
+      --accent-green: #16a34a;
+      --accent-blue: #2563eb;
+      --accent-purple: #7c3aed;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Apple SD Gothic Neo", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      line-height: 1.6;
+      padding: 40px 24px;
+    }
+    .container { max-width: 1040px; margin: 0 auto; }
+    
+    header {
+      margin-bottom: 32px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 24px;
+    }
+    .badge-bar { display: flex; gap: 10px; margin-bottom: 12px; }
+    .badge {
+      font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 9999px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .badge-purple { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
+    .badge-blue { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+    
+    h1 { font-size: 26px; font-weight: 700; margin-bottom: 8px; color: #0f172a; }
+    .subtitle { color: var(--text-muted); font-size: 15px; }
+
+    .grid-4 {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px; margin-bottom: 32px;
+    }
+    .stat-card {
+      background: var(--card-bg); border: 1px solid var(--card-border);
+      border-radius: 12px; padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .stat-title { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+    .stat-val { font-size: 22px; font-weight: 700; color: #0f172a; }
+    .stat-val.red { color: #dc2626; }
+    .stat-val.blue { color: #2563eb; }
+    .stat-desc { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    .section {
+      background: var(--card-bg); border: 1px solid var(--card-border);
+      border-radius: 14px; padding: 28px; margin-bottom: 28px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    h2 {
+      font-size: 18px; font-weight: 600; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px; color: #0f172a;
+    }
+    h2::before {
+      content: ""; display: inline-block; width: 4px; height: 18px;
+      background: var(--accent-blue); border-radius: 2px;
+    }
+
+    /* 코드 및 인용 */
+    pre, code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .code-box {
+      background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px;
+      padding: 14px 18px; font-size: 13px; color: #1e293b; overflow-x: auto;
+      margin: 14px 0; line-height: 1.6;
+    }
+    .diff-del { background: #fee2e2; color: #991b1b; display: block; padding: 1px 4px; border-radius: 2px; }
+    .diff-add { background: #dcfce7; color: #166534; display: block; padding: 1px 4px; border-radius: 2px; }
+
+    /* 비교 그리드 */
+    .feature-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px; margin-top: 14px;
+    }
+    .feature-card {
+      border: 1px solid var(--card-border); border-radius: 10px; padding: 18px;
+      background: #f8fafc;
+    }
+    .feature-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+    .feature-text { font-size: 13px; color: #475569; }
+
+    /* 테이블 */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+    th {
+      text-align: left; padding: 10px 12px;
+      border-bottom: 2px solid #cbd5e1; color: #475569; font-weight: 600;
+      background: #f8fafc;
+    }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--card-border); color: #334155; }
+    tr:last-child td { border-bottom: none; }
+
+    .tag-badge {
+      display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;
+      background: #e2e8f0; color: #334155;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge-bar">
+        <span class="badge badge-purple">아키텍처 리포트</span>
+        <span class="badge badge-blue">Claude Code 리버스 엔지니어링 분석</span>
+      </div>
+      <h1>Claude Code 가변 시스템 프롬프트와 캐시 무효화 메커니즘</h1>
+      <p class="subtitle">공식 GitHub 버그 리포트(#90018, #90342) 및 실제 바이너리(v2.1.258) 분석을 통한 실체 규명</p>
+    </header>
+
+    <!-- 4대 핵심 지표 -->
+    <div class="grid-4">
+      <div class="stat-card">
+        <div class="stat-title">비공개 주입 태그</div>
+        <div class="stat-val blue">&lt;system-reminder&gt;</div>
+        <div class="stat-desc">메시지 배열 후미에 자동 삽입</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">주요 주입 원인</div>
+        <div class="stat-val red">totalTokensReminder</div>
+        <div class="stat-desc">매 턴 남은 토큰 숫자가 변동</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">공식 GitHub 이슈</div>
+        <div class="stat-val">#90018 / #90342</div>
+        <div class="stat-desc">anthropics/claude-code 등록 버그</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">직접적 피해</div>
+        <div class="stat-val red">캐시 무효화 (Floor)</div>
+        <div class="stat-desc">40만 토큰 전액 신규 캐시 작성</div>
+      </div>
+    </div>
+
+    <!-- 1. 가변 시스템 프롬프트의 실체 -->
+    <div class="section">
+      <h2>1. Claude Code가 몰래 주입하는 세 가지 가변 텍스트</h2>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px;">
+        Claude Code는 사용자가 입력한 프롬프트 외에도, 대화 컨텍스트 후미에 아래와 같은 동적 문자열들을 매 턴 새로 생성하여 끼워 넣습니다.
+      </p>
+
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-title" style="color: #dc2626;">① totalTokensReminder (카운트다운)</div>
+          <div class="feature-text">
+            매 턴 남아 있는 세션 토큰 잔량을 모델에 주지시키기 위해 아래 형식의 텍스트를 강제로 주입합니다:<br>
+            <code>&lt;total_tokens&gt;14931235 tokens left&lt;/total_tokens&gt;</code><br>
+            <strong>매 턴 숫자가 바뀌므로 해시가 무조건 달라집니다.</strong>
+          </div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-title" style="color: #2563eb;">② 실시간 작업 환경 메타데이터</div>
+          <div class="feature-text">
+            현재 로컬 시스템 시각, 작업 디렉터리의 실시간 <code>git status</code> 변경 내역, 직전 실행한 bash 명령 결과 요약 등을 직전 메시지 블록에 업데이트하여 전송합니다.
+          </div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-title" style="color: #7c3aed;">③ 동적 플러그인 / 스킬 디렉티브</div>
+          <div class="feature-text">
+            현재 활성화된 스킬 목록, 백그라운드 태스크 알림(<code>task-notification</code>) 등을 컨텍스트에 추가 주입합니다.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 나비효과 비교 다이어그램 (show-me) -->
+    <div class="section">
+      <h2>2. 나비효과: 361바이트의 토큰 카운터 변경이 미치는 영향 (show-me)</h2>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">
+        직전 턴의 메시지와 새 턴의 메시지를 diff로 비교하면, 단 한 줄의 토큰 카운터 숫자가 바뀐 것뿐입니다.
+      </p>
+
+      <div class="code-box">
+<span style="color: #64748b;">// 직전 턴의 마지막 메시지 vs 현재 요청의 메시지 비교 (diff)</span>
+  &lt;system-reminder&gt;
+    현재 작업 디렉터리: /Users/ms/dev/meridian
+<span class="diff-del">-   &lt;total_tokens&gt;14931235 tokens left&lt;/total_tokens&gt;</span>
+<span class="diff-add">+   &lt;total_tokens&gt;14926828 tokens left&lt;/total_tokens&gt;  // &lt;-- 고작 이 361바이트 숫자 변경!</span>
+  &lt;/system-reminder&gt;
+      </div>
+
+      <div class="code-box" style="background: #ffffff; border-color: #e2e8f0;">
+<strong>[증폭 메커니즘 흐름도]</strong>
+1. Claude Code CLI   ──(매 턴 바뀐 total_tokens 주입)──&gt;
+2. Meridian Proxy    ──(이전 대화 해시 불일치: Stale session detected)──&gt;
+3. Fresh Replay 발생 ──(기존 세션 포인터 폐기, 40만 토큰 처음부터 재전송)──&gt;
+4. Anthropic API     ──(신규 캐시 작성 40만 토큰 × 1.25배 가중 과금 폭탄!)──&gt; 5시간 한도 100% 소진
+      </div>
+    </div>
+
+    <!-- 3. 교차 검증: 공식 GitHub 이슈 및 바이너리 증거 -->
+    <div class="section">
+      <h2>3. 공식 GitHub 버그 리포트 실측 증거 (Issue #90018)</h2>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px;">
+        Anthropic 공식 저장소 <code>anthropics/claude-code</code>의 이슈 #90018에서 보고된 실제 실측 데이터입니다. <code>totalTokensReminder</code>로 인해 캐시 읽기(cache_read)가 바닥(8,192 토큰)에 묶이고 미스된 토큰이 눈덩이처럼 불어나는 현상이 정확히 일치합니다.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>요청 순번</th>
+            <th>미스된 입력 토큰 (Uncached Input)</th>
+            <th>캐시 읽기 (Cache Read)</th>
+            <th>주입된 토큰 리마인더 내용</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Turn 1</td>
+            <td>60,327 tokens</td>
+            <td>8,192 tokens (캐시 바닥)</td>
+            <td><code>&lt;total_tokens&gt;14931235 tokens left&lt;/total_tokens&gt;</code></td>
+          </tr>
+          <tr>
+            <td>Turn 2</td>
+            <td>63,476 tokens</td>
+            <td>8,192 tokens (캐시 바닥)</td>
+            <td><code>&lt;total_tokens&gt;14926828 tokens left&lt;/total_tokens&gt;</code></td>
+          </tr>
+          <tr>
+            <td>Turn 3</td>
+            <td>66,656 tokens</td>
+            <td>8,192 tokens (캐시 바닥)</td>
+            <td><code>&lt;total_tokens&gt;14923572 tokens left&lt;/total_tokens&gt;</code></td>
+          </tr>
+          <tr>
+            <td>Turn 10</td>
+            <td><strong>77,252 tokens</strong></td>
+            <td>8,192 tokens (캐시 바닥)</td>
+            <td><strong>매 턴 숫자가 바뀌며 캐시가 누적되지 못함</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top: 16px;">
+        <div style="font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 6px;">로컬 바이너리(v2.1.258) 내부 추출 문자열:</div>
+        <div class="code-box" style="margin-top: 4px;">
+&lt;(system-reminder|task-notification)&gt;[\s\S]*?(&lt;\/\1&gt;|$)
+system_reminders_count
+system_reminders
+userSystemPrompt
+critical_system_reminder
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 검색 방법 및 키워드 안내 -->
+    <div class="section">
+      <h2>4. 깃허브 및 웹 검색 가이드</h2>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px;">
+        공식 문서에는 내부 태그명이 노출되지 않으므로, <strong>GitHub 이슈 검색창</strong>에서 아래 키워드로 검색해야 관련 기술 문서와 버그 리포트를 찾을 수 있습니다.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>검색 대상</th>
+            <th>추천 검색 키워드</th>
+            <th>확인 가능한 내용</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>공식 이슈 검색</strong><br><code>anthropics/claude-code</code></td>
+            <td><code>"system-reminder"</code></td>
+            <td>시스템 리마인더 강제 주입 및 설정 오버라이드 관련 버그 리포트 전체</td>
+          </tr>
+          <tr>
+            <td><strong>토큰 카운터 버그</strong><br><code>anthropics/claude-code</code></td>
+            <td><code>"totalTokensReminder" prompt-cache</code></td>
+            <td>이슈 #90018: 매 턴 토큰 카운트다운 숫자가 바뀌며 캐시가 깨지는 현상</td>
+          </tr>
+          <tr>
+            <td><strong>반복 주입 현상</strong><br><code>anthropics/claude-code</code></td>
+            <td><code>"total_tokens" "system message"</code></td>
+            <td>이슈 #90342: 매 요청마다 컨텍스트에 누적 주입되는 동작 보고</td>
+          </tr>
+          <tr>
+            <td><strong>Meridian 세션 충돌</strong></td>
+            <td><code>"Stale session detected" prefix overlap</code></td>
+            <td>Meridian 진단 로그에서 이력 불일치로 fresh replay가 발생하는 현상</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

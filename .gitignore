@@ -1,0 +1,20 @@
+# 실제 OAuth 토큰이 들어가는 파일. .env* 를 통째로 막고 예시 파일만 되살린다.
+# (MERIDIAN_PROFILES 를 쓰면 여러 계정 토큰이 한 줄에 들어가므로 .env.bak 같은
+#  사본이 실수로 커밋되는 경로까지 닫아둔다.)
+.env*
+!.env.example
+
+# telemetry.db 를 호스트로 꺼내서 들여다볼 때 생기는 사본.
+# 정본은 meridian-config 볼륨 안에 있고, 프롬프트 내용은 없지만 세션 ID와
+# 사용량/비용이 그대로 들어 있다.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# docker compose logs 나 쿼리 결과를 파일로 받을 때
+*.log
+
+# macOS
+.DS_Store
