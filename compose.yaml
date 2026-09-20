@@ -29,6 +29,8 @@ services:
   meridian:
     # 멀티아치(amd64/arm64) 공식 이미지. 재현성이 필요하면 :latest 대신 버전 태그를 박아둔다.
     image: ghcr.io/rynfar/meridian:${MERIDIAN_VERSION:-latest}
+    # up 할 때마다 레지스트리를 확인해 최신 이미지를 받는다(다이제스트가 같으면 재다운로드 없음).
+    pull_policy: always
     container_name: meridian
     depends_on:
       init:
